@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_todo/features/colloborator_map.dart';
 import 'package:supabase_todo/features/helper.dart';
 import 'package:supabase_todo/model/prompt_model.dart';
 import 'package:supabase_todo/screens/task_detail_Screen.dart';
-import 'package:supabase_todo/utils/supabase_service.dart'; 
-import 'package:url_launcher/url_launcher.dart'; 
+import 'package:supabase_todo/utils/supabase_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class PromptCard extends StatelessWidget {
   final Prompt prompt;
-  final VoidCallback onRefresh; 
+  final VoidCallback onRefresh;
+  final Function(Prompt)? onStatusChanged;
 
-  const PromptCard({super.key, required this.prompt, required this.onRefresh});
+  const PromptCard({
+    super.key,
+    required this.prompt,
+    required this.onRefresh,
+    this.onStatusChanged,
+  });
 
-  
   Future<List<_AttachmentFile>> _fetchAttachments() async {
     final storage = Supabase.instance.client.storage.from('task_files');
     final folder = prompt.id!.toString();
@@ -25,7 +31,7 @@ class PromptCard extends StatelessWidget {
         return _AttachmentFile(name: f.name, path: path, url: url);
       }).toList();
     } catch (_) {
-      return <_AttachmentFile>[]; // fail silent => no attachments
+      return <_AttachmentFile>[];
     }
   }
 
@@ -38,8 +44,12 @@ class PromptCard extends StatelessWidget {
 
   bool _isImage(String name) {
     final n = name.toLowerCase();
-    return n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg') || n.endsWith('.gif') || n.endsWith('.webp');
-    }
+    return n.endsWith('.png') ||
+        n.endsWith('.jpg') ||
+        n.endsWith('.jpeg') ||
+        n.endsWith('.gif') ||
+        n.endsWith('.webp');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,9 +57,7 @@ class PromptCard extends StatelessWidget {
       elevation: 6,
       shadowColor: Colors.black26,
       margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
         padding: const EdgeInsets.all(14.0),
         child: Column(
@@ -113,59 +121,134 @@ class PromptCard extends StatelessWidget {
             const SizedBox(height: 12),
 
             /// ---------- Action buttons ----------
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                /// Invite
-                _ActionButton(
-                  icon: Icons.person_add,
-                  label: "Invite",
-                  color: Colors.green,
-                  onPressed: () => _showInviteDialog(context),
-                ),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  const SizedBox(width: 8),
 
-                const SizedBox(width: 8),
+_ActionButton(
+  icon: Icons.map,
+  label: "Map",
+  color: Colors.purple,
+  onPressed: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CollaboratorMap(promptId: prompt.id!),
+      ),
+    );
+  },
+),
 
-                /// Attach
-                _ActionButton(
-                  icon: Icons.attach_file,
-                  label: "Attach",
-                  color: Colors.orange,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => TaskDetailScreen(prompt: prompt),
-                      ),
-                    );
-                  },
-                ),
+                  _ActionButton(
+                    icon: Icons.person_add,
+                    label: "Invite",
+                    color: Colors.green,
+                    onPressed: () => _showInviteDialog(context, prompt.id!),
+                  ),
 
-                const SizedBox(width: 8),
+                  const SizedBox(width: 8),
 
-                /// Edit
-                _ActionButton(
-                  icon: Icons.edit,
-                  label: "Edit",
-                  color: Colors.blue,
-                  onPressed: () => _showEditDialog(context),
-                ),
+                  _ActionButton(
+                    icon: Icons.attach_file,
+                    label: "Attach",
+                    color: Colors.orange,
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => TaskDetailScreen(prompt: prompt),
+                        ),
+                      );
+                    },
+                  ),
 
-                const SizedBox(width: 8),
+                  const SizedBox(width: 8),
 
-                /// Delete
-                _ActionButton(
-                  icon: Icons.delete,
-                  label: "Delete",
-                  color: Colors.red,
-                  onPressed: () => _showDeleteDialog(context),
-                ),
-              ],
+                  _ActionButton(
+                    icon: Icons.edit,
+                    label: "Edit",
+                    color: Colors.blue,
+                    onPressed: () => _showEditDialog(context),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  _ActionButton(
+                    icon: Icons.delete,
+                    label: "Delete",
+                    color: Colors.red,
+                    onPressed: () => _showDeleteDialog(context),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  /// ✅ Complete / Pending toggle
+                  _ActionButton(
+                    icon: prompt.status == "completed"
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    label: prompt.status == "completed"
+                        ? "Completed"
+                        : "Mark Complete",
+                    color: prompt.status == "completed"
+                        ? Colors.teal
+                        : Colors.grey,
+                    onPressed: () async {
+                      try {
+                        final newStatus = prompt.status == "completed"
+                            ? "pending"
+                            : "completed";
+
+                        // 🔹 Update DB
+                        await Supabase.instance.client
+                            .from("prompts")
+                            .update({"status": newStatus})
+                            .eq("id", prompt.id!);
+
+                        // 🔹 Create updated Prompt instead of mutating
+                        final updatedPrompt = Prompt(
+                          id: prompt.id,
+                          title: prompt.title,
+                          prompt: prompt.prompt,
+                          ownerId: prompt.ownerId,
+                          createdAt: prompt.createdAt,
+                          status: newStatus,
+                        );
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text("Status updated → $newStatus"),
+                            ),
+                          );
+                        }
+
+                        // 🔹 Notify parent with updated Prompt
+                        if (onStatusChanged != null) {
+                          onStatusChanged!(updatedPrompt);
+                        }
+
+                        // 🔹 Trigger refresh
+                        onRefresh();
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("❌ Error updating status: $e"),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
 
             const SizedBox(height: 16),
 
-            // ---------- NEW: Attachments section (always shows heading) ----------
+            /// ---------- Attachments ----------
             const Text(
               "Attachments",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -176,7 +259,6 @@ class PromptCard extends StatelessWidget {
               future: _fetchAttachments(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  // Minimal inline loader to avoid changing layout elsewhere
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: SizedBox(
@@ -226,7 +308,8 @@ class PromptCard extends StatelessWidget {
                                 children: [
                                   const Icon(Icons.insert_drive_file, size: 36),
                                   Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4.0),
                                     child: Text(
                                       f.name,
                                       maxLines: 1,
@@ -248,8 +331,8 @@ class PromptCard extends StatelessWidget {
     );
   }
 
-  /// ---------------- Invite Dialog ----------------
-  void _showInviteDialog(BuildContext context) {
+  /// ---------- Invite Dialog ----------
+  void _showInviteDialog(BuildContext context, String promptId) {
     final emailController = TextEditingController();
     bool isInviting = false;
 
@@ -279,18 +362,21 @@ class PromptCard extends StatelessWidget {
                         final email = emailController.text.trim();
                         if (email.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("⚠ Please enter an email")),
+                            const SnackBar(
+                                content: Text("⚠ Please enter an email")),
                           );
                           return;
                         }
+
                         setState(() => isInviting = true);
 
                         final error = await PromptCollaboration.inviteUserToPrompt(
                           email: email,
-                          promptId: prompt.id!.toString(),
+                          promptId: promptId,
                         );
 
                         setState(() => isInviting = false);
+
                         if (!context.mounted) return;
 
                         if (error == null) {
@@ -298,19 +384,21 @@ class PromptCard extends StatelessWidget {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text(" Invitation sent to $email")),
                           );
+                          onRefresh();
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text(" Error: $error")),
                           );
-                          // ignore: avoid_print
-                          print(error);
                         }
                       },
                 child: isInviting
                     ? const SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Text("Send Invite"),
               ),
@@ -321,7 +409,7 @@ class PromptCard extends StatelessWidget {
     );
   }
 
-  /// ---------------- Edit Dialog ----------------
+  /// ---------- Edit Dialog ----------
   void _showEditDialog(BuildContext context) {
     final titleController = TextEditingController(text: prompt.title);
     final promptController = TextEditingController(text: prompt.prompt);
@@ -330,81 +418,87 @@ class PromptCard extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) {
-        return StatefulBuilder(builder: (context, setState) {
-          return AlertDialog(
-            title: const Text("Edit Prompt"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(labelText: "Title"),
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text("Edit Prompt"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(labelText: "Title"),
+                  ),
+                  TextField(
+                    controller: promptController,
+                    decoration: const InputDecoration(labelText: "Prompt"),
+                    maxLines: 3,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancel"),
                 ),
-                TextField(
-                  controller: promptController,
-                  decoration: const InputDecoration(labelText: "Prompt"),
-                  maxLines: 3,
+                ElevatedButton(
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          setState(() => isSaving = true);
+                          try {
+                            await Supabase.instance.client
+                                .from("prompts")
+                                .update({
+                              "title": titleController.text,
+                              "prompt": promptController.text,
+                            }).eq("id", prompt.id!);
+
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("✅ Prompt updated"),
+                                ),
+                              );
+                            }
+                            onRefresh();
+                          } catch (e) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(" Error: $e")),
+                            );
+                          } finally {
+                            setState(() => isSaving = false);
+                          }
+                        },
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text("Save"),
                 ),
               ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel"),
-              ),
-              ElevatedButton(
-                onPressed: isSaving
-                    ? null
-                    : () async {
-                        setState(() => isSaving = true);
-                        try {
-                          await Supabase.instance.client
-                              .from("prompts")
-                              .update({
-                                "title": titleController.text,
-                                "prompt": promptController.text,
-                              })
-                              .eq("id", prompt.id!);
-
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("✅ Prompt updated")),
-                            );
-                          }
-                          onRefresh();
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text("❌ Error: $e")),
-                          );
-                          // ignore: avoid_print
-                          print('$e');
-                        } finally {
-                          setState(() => isSaving = false);
-                        }
-                      },
-                child: isSaving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text("Save"),
-              ),
-            ],
-          );
-        });
+            );
+          },
+        );
       },
     );
   }
 
-  /// ---------------- Delete Dialog ----------------
+  /// ---------- Delete Dialog ----------
   void _showDeleteDialog(BuildContext context) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Confirm Delete"),
-        content: const Text("Are you sure you want to delete this prompt? This cannot be undone."),
+        content: const Text(
+          "Are you sure you want to delete this prompt? This cannot be undone.",
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -413,7 +507,10 @@ class PromptCard extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               try {
-                await Supabase.instance.client.from("prompts").delete().eq("id", prompt.id!);
+                await Supabase.instance.client
+                    .from("prompts")
+                    .delete()
+                    .eq("id", prompt.id!);
 
                 if (context.mounted) {
                   Navigator.pop(context);
@@ -426,8 +523,6 @@ class PromptCard extends StatelessWidget {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text("❌ Error deleting: $e")),
                 );
-                // ignore: avoid_print
-                print('$e');
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -462,7 +557,6 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-// ---------- NEW: tiny data holder ----------
 class _AttachmentFile {
   final String name;
   final String path;

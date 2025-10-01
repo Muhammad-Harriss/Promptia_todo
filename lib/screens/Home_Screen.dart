@@ -1,9 +1,8 @@
-// ignore_for_file: unnecessary_cast, unnecessary_type_check
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:supabase_todo/features/add_prompts.dart';
 import 'package:supabase_todo/model/prompt_model.dart';
+import 'package:supabase_todo/screens/Analaytics/analaytics_dashbord_screen.dart';
 import 'package:supabase_todo/screens/auth/login.dart';
 import 'package:supabase_todo/widgets/prompt_card.dart';
 
@@ -17,61 +16,151 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool isLoading = false;
   List<Prompt> prompts = [];
+  RealtimeChannel? _channel;
 
   @override
   void initState() {
     super.initState();
-    fetchPrompts();
+    _waitForUserAndFetch();
   }
 
+  Future<void> _waitForUserAndFetch() async {
+    final supabase = Supabase.instance.client;
+    const timeout = Duration(seconds: 10);
+    const interval = Duration(milliseconds: 200);
+    var elapsed = Duration.zero;
 
-  /// Fetch prompts from Supabase (owner or collaborator)
-Future<void> fetchPrompts() async {
-  setState(() => isLoading = true);
+    while (supabase.auth.currentUser == null && elapsed < timeout) {
+      await Future.delayed(interval);
+      elapsed += interval;
+    }
 
-  try {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) throw Exception("No user logged in");
+    if (supabase.auth.currentUser != null) {
+      await fetchPrompts();
+      _subscribeToRealtime();
+    } else {
+      debugPrint("No user session found, skipping fetchPrompts");
+    }
+  }
 
-    // Call the RPC function
-    final response = await Supabase.instance.client
-        .rpc('get_user_prompts', params: {'uid': user.id});
+  Future<void> fetchPrompts() async {
+    setState(() => isLoading = true);
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) throw Exception("No user logged in");
 
-    final allPrompts = <Prompt>[];
+      final response = await Supabase.instance.client
+          .rpc('get_user_prompts', params: {'uid': user.id});
 
-    if (response is List) {
-      // Each item is a PostgrestMap (Map<String, dynamic>)
-      for (final item in response) {
-        if (item is Map<String, dynamic>) {
-          allPrompts.add(Prompt(
-            id: item['id'] as String,
-            title: item['title'] as String,
-            prompt: item['prompt'] as String,
-            ownerId: item['owner_id'] as String,
-            createdAt: DateTime.parse(item['created_at'] as String),
-          ));
+      final allPrompts = <Prompt>[];
+
+      if (response is List) {
+        for (final item in response) {
+          if (item is Map<String, dynamic>) {
+            allPrompts.add(Prompt.fromJson(item));
+          }
         }
       }
-    }
 
+      if (!mounted) return;
+      setState(() => prompts = allPrompts);
+    } catch (e, st) {
+      debugPrint("Error fetching prompts via RPC: $e\n$st");
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error fetching prompts: $e")),
+          );
+        });
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  void _subscribeToRealtime() {
+    final supabase = Supabase.instance.client;
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    _channel = supabase.channel('public:prompts')
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'prompts',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'owner_id',
+          value: user.id,
+        ),
+        callback: (payload) => _handleRealtimeInsert(payload),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'prompt_collaborators',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'user_id',
+          value: user.id,
+        ),
+        callback: (payload) async {
+          final record = Map<String, dynamic>.from(payload.newRecord);
+          final promptId = record['prompt_id'] as String;
+          final newPrompt = await supabase
+              .from('prompts')
+              .select()
+              .eq('id', promptId)
+              .maybeSingle();
+
+          if (newPrompt != null && mounted) {
+            setState(() {
+              prompts.insert(0, Prompt.fromJson(newPrompt));
+            });
+          }
+        },
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.update,
+        schema: 'public',
+        table: 'prompts',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'owner_id',
+          value: user.id,
+        ),
+        callback: (payload) => _handleRealtimeUpdate(payload),
+      )
+      ..subscribe();
+  }
+
+  void _handleRealtimeInsert(PostgresChangePayload payload) {
+    final newRecord = Map<String, dynamic>.from(payload.newRecord);
     if (!mounted) return;
-    setState(() => prompts = allPrompts);
-  } catch (e, st) {
-    debugPrint("Error fetching prompts via RPC: $e\n$st");
-    if (mounted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error fetching prompts: $e")),
-        );
+
+    setState(() {
+      prompts.insert(0, Prompt.fromJson(newRecord));
+    });
+  }
+
+  void _handleRealtimeUpdate(PostgresChangePayload payload) {
+    final updatedRecord = Map<String, dynamic>.from(payload.newRecord);
+    final index = prompts.indexWhere((p) => p.id == updatedRecord['id']);
+    if (index != -1 && mounted) {
+      setState(() {
+        prompts[index] = Prompt.fromJson(updatedRecord);
       });
     }
-  } finally {
-    if (mounted) setState(() => isLoading = false);
   }
-}
 
+  @override
+  void dispose() {
+    if (_channel != null) {
+      Supabase.instance.client.removeChannel(_channel!);
+    }
+    super.dispose();
+  }
 
-  /// Confirm logout dialog
   Future<void> _confirmLogout() async {
     final bool? confirm = await showDialog<bool>(
       context: context,
@@ -101,13 +190,10 @@ Future<void> fetchPrompts() async {
     }
   }
 
-  /// Logout
   Future<void> _logout() async {
     try {
       await Supabase.instance.client.auth.signOut();
-
       if (!mounted) return;
-
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const Login()),
@@ -116,11 +202,9 @@ Future<void> fetchPrompts() async {
     } catch (e) {
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Failed to log out: $e")),
-            );
-          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Failed to log out: $e")),
+          );
         });
       }
     }
@@ -136,6 +220,17 @@ Future<void> fetchPrompts() async {
         title: const Text(
           'Promptia',
           style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.bar_chart, color: Colors.white),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AnalyticsDashboard(),
+              ),
+            );
+          },
         ),
         actions: [
           IconButton(
@@ -176,6 +271,11 @@ Future<void> fetchPrompts() async {
                       child: PromptCard(
                         prompt: prompt,
                         onRefresh: fetchPrompts,
+                        onStatusChanged: (updatedPrompt) {
+                          setState(() {
+                            prompts[index] = updatedPrompt;
+                          });
+                        },
                       ),
                     );
                   },

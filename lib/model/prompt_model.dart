@@ -1,16 +1,17 @@
 class Prompt {
-  String? id; // uuid stored as string
+  String? id; 
   String? title;
   String? prompt;
   String? ownerId;
   DateTime? createdAt;
-
+  String status; 
   Prompt({
     this.id,
     this.title,
     this.prompt,
     this.ownerId,
     this.createdAt,
+    required this.status,
   });
 
   factory Prompt.fromJson(Map<String, dynamic> json) {
@@ -19,6 +20,7 @@ class Prompt {
       title: json['title'] as String?,
       prompt: json['prompt'] as String?,
       ownerId: json['owner_id'] as String?,
+      status: json['status']?.toString() ?? 'pending', 
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : null,
@@ -31,5 +33,6 @@ class Prompt {
         'prompt': prompt,
         'owner_id': ownerId,
         'created_at': createdAt?.toIso8601String(),
+        'status': status, 
       };
 }

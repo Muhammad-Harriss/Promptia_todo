@@ -43,6 +43,13 @@ dependencies:
   form_validator: ^2.1.1
   shared_preferences: ^2.5.3
   url_launcher: ^6.3.2
+  firebase_core: ^4.1.0
+  firebase_messaging: ^16.0.1
+  fl_chart: ^0.69.2
+  google_maps_flutter: ^2.13.1
+  location: ^8.0.1
+  flutter_map: ^8.2.2
+  latlong: ^0.6.1
  
 
 dev_dependencies:

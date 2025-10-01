@@ -14,13 +14,44 @@ class Login extends StatefulWidget {
 }
 
 class _LoginState extends State<Login> {
-  final GlobalKey<FormState> _foam = GlobalKey<FormState>();
-  final TextEditingController emailcontroller = TextEditingController(text: '');
-  final TextEditingController passwordcontroller =
-      TextEditingController(text: '');
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
   final AuthController authController = AuthController();
 
   bool loginLoading = false;
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    if (!_formKey.currentState!.validate() || loginLoading) return;
+
+    if (!mounted) return;
+    setState(() => loginLoading = true);
+
+    final success = await authController.login(
+      emailController.text.trim(),
+      passwordController.text.trim(),
+    );
+
+    if (!mounted) return;
+    setState(() => loginLoading = false);
+
+    if (success) {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, RoutesName.home);
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Login failed. Try again.")),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,14 +61,14 @@ class _LoginState extends State<Login> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Form(
-              key: _foam,
+              key: _formKey,
               child: Column(
                 children: [
-                  Align(
+                  const Align(
                     alignment: Alignment.topLeft,
                     child: Text(
                       'Promptia',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 30, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -50,14 +81,14 @@ class _LoginState extends State<Login> {
                     label: 'Email',
                     hinttext: 'Enter your Email',
                     validatorCallback: ValidationBuilder().email().build(),
-                    controller: emailcontroller,
+                    controller: emailController,
                   ),
                   const SizedBox(height: 20),
                   AuthInput(
                     label: 'Password',
                     hinttext: "Enter your Password",
                     isPasswordfield: true,
-                    controller: passwordcontroller,
+                    controller: passwordController,
                     validatorCallback: ValidationBuilder()
                         .minLength(6)
                         .maxLength(12)
@@ -65,30 +96,7 @@ class _LoginState extends State<Login> {
                   ),
                   const SizedBox(height: 20),
                   ElevatedButton(
-                    onPressed: () async {
-                      if (_foam.currentState!.validate() && !loginLoading) {
-                        setState(() => loginLoading = true);
-
-                        final success = await authController.login(
-                          emailcontroller.text.trim(),
-                          passwordcontroller.text.trim(),
-                        );
-
-                        setState(() => loginLoading = false);
-
-                        if (success && mounted) {
-                          Navigator.pushReplacementNamed(
-                              context, RoutesName.home);
-                        } else {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text("Login failed. Try again.")),
-                            );
-                          }
-                        }
-                      }
-                    },
+                    onPressed: _handleLogin,
                     style: commonButtonStyle(),
                     child: Text(loginLoading ? "Loading..." : 'Login'),
                   ),
@@ -97,14 +105,16 @@ class _LoginState extends State<Login> {
                   const SizedBox(height: 10),
                   Text.rich(
                     TextSpan(
-                      text: "Don't have an Account ? ",
+                      text: "Don't have an Account? ",
                       children: [
                         TextSpan(
                           text: 'SignUp',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style:
+                              const TextStyle(fontWeight: FontWeight.bold),
                           recognizer: TapGestureRecognizer()
                             ..onTap = () {
-                              Navigator.pushNamed(context, RoutesName.signup);
+                              Navigator.pushNamed(
+                                  context, RoutesName.signup);
                             },
                         ),
                       ],

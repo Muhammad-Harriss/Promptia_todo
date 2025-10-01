@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "660612640173",
+    "project_id": "promptia-332d0",
+    "storage_bucket": "promptia-332d0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:660612640173:android:a0fb2fda8e0c6e59104524",
+        "android_client_info": {
+          "package_name": "com.example.supabase_todo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDcKgeeoJ724TraG5Kbp2CI5k9ReYIRhaM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

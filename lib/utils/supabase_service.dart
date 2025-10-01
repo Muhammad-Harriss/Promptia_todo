@@ -1,9 +1,11 @@
 // ignore_for_file: unnecessary_type_check
-
-import 'package:flutter/material.dart';
+import 'dart:async'; 
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_todo/routes/routes_name.dart';
 import 'package:supabase_todo/utils/storage_service.dart';
+import 'package:supabase_todo/model/prompt_model.dart';
+
 
 class SupabaseService {
   static final SupabaseClient supabase = Supabase.instance.client;
@@ -50,41 +52,119 @@ class SupabaseService {
         await StorageService.clearSession();
         navigatorKey.currentState
             ?.pushNamedAndRemoveUntil(RoutesName.login, (_) => false);
-      } else if (event == AuthChangeEvent.tokenRefreshed) {
-        // session already refreshed & saved above
       }
     });
   }
 }
 
 
+
 extension PromptCollaboration on SupabaseService {
-  /// Invite a user (by email) to collaborate on a prompt.
-  /// Returns null if successful, or an error string otherwise.
+  /// ---------------- Invite a user ----------------
   static Future<String?> inviteUserToPrompt({
     required String email,
-    required String promptId, // must be a valid prompt UUID
+    required String promptId,
+  }) async {
+    final trimmedEmail = email.trim().toLowerCase();
+    if (trimmedEmail.isEmpty) return "Email cannot be empty";
+
+    try {
+      // 1. Send notification
+      final notifRes = await SupabaseService.supabase.functions
+          .invoke(
+            'send-notification',
+            body: {
+              'type': 'assignment',
+              'prompt_id': promptId,
+              'user_email': trimmedEmail,
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+
+      // 2. Send email (independent of notification result)
+      final emailRes = await SupabaseService.supabase.functions
+          .invoke(
+            'send-email',
+            body: {
+              'to': trimmedEmail,
+              'subject': "You've been invited!",
+              'body': "You’ve been invited to collaborate on prompt $promptId 🚀",
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+
+      debugPrint("✅ Notification response: ${notifRes.data}");
+      debugPrint("✅ Email response: ${emailRes.data}");
+
+      return null; // success
+    } on TimeoutException {
+      return "Request timed out. Please try again.";
+    } catch (e, st) {
+      debugPrint("🔥 ERROR inviteUserToPrompt: $e\n$st");
+      return "Network error or request failed. Please try again.";
+    }
+  }
+  
+
+
+
+
+  /// ---------------- Fetch prompts ----------------
+  static Future<List<Prompt>> fetchUserPrompts() async {
+    try {
+      final rpc = await SupabaseService.supabase.rpc('get_user_prompts');
+      if (rpc is List) {
+        return rpc
+            .map((e) => Prompt.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+      return [];
+    } catch (e, st) {
+      print("ERROR fetchUserPrompts: $e\n$st");
+      return [];
+    }
+  }
+
+  /// ---------------- Update prompt ----------------
+  static Future<String?> updatePrompt({
+    required String promptId,
+    required String title,
+    required String promptText,
   }) async {
     try {
-      final trimmedEmail = email.trim().toLowerCase();
+      final rpc = await SupabaseService.supabase.rpc('update_prompt', params: {
+        'p_prompt_id': promptId,
+        'p_title': title,
+        'p_prompt': promptText,
+      });
 
-      // Call the RPC (returns a String now)
-      final result = await SupabaseService.supabase.rpc(
-        'invite_user_to_prompt',
-        params: {
-          'p_prompt_id': promptId,
-          'p_user_email': trimmedEmail,
-        },
-      );
-
-      if (result == 'success') {
-        return null; // ✅ success → return no error
+      if (rpc is String) return rpc == 'success' ? null : rpc;
+      if (rpc is Map<String, dynamic>) {
+        final val = rpc.values.first;
+        return val == 'success' ? null : val.toString();
       }
-
-      // Pass back Postgres return string as error
-      return result.toString();
+      return null;
     } catch (e, st) {
-      print("ERROR inviteUserToPrompt: $e\n$st");
+      print("ERROR updatePrompt: $e\n$st");
+      return e.toString();
+    }
+  }
+
+  /// ---------------- Delete prompt ----------------
+  static Future<String?> deletePrompt({required String promptId}) async {
+    try {
+      final rpc = await SupabaseService.supabase.rpc('delete_prompt', params: {
+        'p_prompt_id': promptId,
+      });
+
+      if (rpc is String) return rpc == 'success' ? null : rpc;
+      if (rpc is Map<String, dynamic>) {
+        final val = rpc.values.first;
+        return val == 'success' ? null : val.toString();
+      }
+      return null;
+    } catch (e, st) {
+      print("ERROR deletePrompt: $e\n$st");
       return e.toString();
     }
   }
